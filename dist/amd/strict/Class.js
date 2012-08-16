@@ -93,7 +93,7 @@ define([
         callerClassBaseId,
         toStringInstance,
         toStringConstructor,
-        hasProxy = false && typeof Proxy !== 'undefined';
+        hasProxy = typeof Proxy !== 'undefined';
 
     /**
      * Clones a property in order to make them unique for the instance.
