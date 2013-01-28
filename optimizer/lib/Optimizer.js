@@ -3,7 +3,6 @@
 'use strict';
 
 var esprima = require('esprima'),
-    rocambole = require('rocambole'),
     Syntax = esprima.Syntax,
     Optimizer;
 
@@ -64,6 +63,7 @@ Optimizer.prototype.optimizeInterface = function (node) {
 
         if (curr.value.type === Syntax.FunctionExpression) {
             nodes.splice(x, 1);
+            //token.remove(curr);
         }
     }
 
@@ -95,6 +95,7 @@ Optimizer.prototype.optimizeAbstractClass = function (node) {
             this._removeAbstractFunctions(curr.value.properties);
             if (!curr.value.properties.length) {
                 nodes.splice(x, 1);
+                //token.remove(curr);
             }
 
             break;
@@ -155,11 +156,17 @@ Optimizer.prototype.optimizeClass = function (node) {
  * @param {Array} properties The properties to remove
  */
 Optimizer.prototype._removeProperties = function (nodes, properties) {
-    var x;
+    var x,
+        curr;
 
     for (x = nodes.length - 1; x >= 0; x -= 1) {
-        if (properties.indexOf(nodes[x].key.name) !== -1) {
+        curr = nodes[x];
+        if (properties.indexOf(curr.key.name) !== -1) {
             nodes.splice(x, 1);
+            // TODO: strip trailing commas!
+            //       let's wait for rocambole/esformatter helpers!
+            curr.startToken.prev.next = curr.endToken.next;
+            curr.endToken.next.prev = curr.startToken.prev;
         }
     }
 };
@@ -182,9 +189,11 @@ Optimizer.prototype._removeAbstractFunctions = function (nodes) {
             this._removeAbstractFunctions(curr.value.properties);
             if (!curr.value.properties.length) {
                 nodes.splice(x, 1);
+                //token.remove(curr);
             }
         } else if (curr.value.type === Syntax.FunctionExpression) {
             nodes.splice(x, 1);
+            //token.remove(curr);
         }
     }
 };
@@ -261,6 +270,7 @@ Optimizer.prototype._replaceSpecial = function (funcName, node, isStatic) {
     //       In this case, regexps are much easier but more error prone
     //       Anyway, at this point we are inside a class function
     var code = node.value ? node.value.toString() : node.object.toString(),
+        newCode = code,
         currParent = this._currentParent;
 
     if (!isStatic && funcName === ('_initialize' || funcName === '__initialize')) {
@@ -269,21 +279,23 @@ Optimizer.prototype._replaceSpecial = function (funcName, node, isStatic) {
 
     // Super replacement
     if (!isStatic) {
-        code = code.replace(/(_*this|_*that|_*self)((?:\r|\n|\s)*)\.((?:\r|\n|\s)*)\$super\(/g, currParent + '$2.prototype.$3' + funcName + '.call($1, ');
+        newCode = newCode.replace(/(_*this|_*that|_*self)((?:\r|\n|\s)*)\.((?:\r|\n|\s)*)\$super\(/g, currParent + '$2.prototype.$3' + funcName + '.call($1, ');
     } else {
-        code = code.replace(/(_*this|_*that|_*self)((?:\r|\n|\s)*)\.((?:\r|\n|\s)*)\$super\(/g, currParent + '$2.$3' + funcName + '.call($1, ');
+        newCode = newCode.replace(/(_*this|_*that|_*self)((?:\r|\n|\s)*)\.((?:\r|\n|\s)*)\$super\(/g, currParent + '$2.$3' + funcName + '.call($1, ');
     }
-    code = code.replace(/(_*this|_*that|_*self), \)/g, '$1)');
+    newCode = newCode.replace(/(_*this|_*that|_*self), \)/g, '$1)');
 
     // If on static context, this.$static can be optimized to just this
     if (isStatic) {
-        code = code.replace(/(_*this|_*that|_*self)((?:\r|\n|\s)*)?\.((?:\r|\n|\s)*)?\$static/g, '$1$2$3');
+        newCode = newCode.replace(/(_*this|_*that|_*self)((?:\r|\n|\s)*)?\.((?:\r|\n|\s)*)?\$static/g, '$1$2$3');
     }
 
     // Remove member
-    code = code.replace(/\.\$member\(\)/g, '');
+    newCode = newCode.replace(/\.\$member\(\)/g, '');
 
-    this._updateNode(node.value || node.object, code);
+    if (code.length !== newCode.length) {
+        this._updateNode(node.value || node.object, newCode);
+    }
 
     return true;
 };
@@ -316,11 +328,14 @@ Optimizer.prototype._getExtends = function (node) {
  */
 Optimizer.prototype._removeExtends = function (node) {
     var x,
-        length = node.properties.length;
+        length = node.properties.length,
+        curr;
 
     for (x = 0; x < length; x += 1) {
-        if (node.properties[x].key.name === '$extends') {
+        curr = node.properties[x];
+        if (curr.key.name === '$extends') {
             node.properties.splice(x, 1);
+            //token.remove(curr);
             break;
         }
     }
@@ -333,23 +348,20 @@ Optimizer.prototype._removeExtends = function (node) {
  * @param {String} str  The new contents
  */
 Optimizer.prototype._updateNode = function (node, str) {
-    var newToken;
+    var newToken = {
+        type : 'Custom', // can be anything (not used internally)
+        value : str
+    };
+    newToken.range = [node.startToken.range[0], node.startToken.range[0] + str.length];
 
-    if (node.type === Syntax.FunctionExpression) {
-        str = str.replace(/function\s*\(/, 'function x(');
-        newToken = rocambole.parse(str).body[0];
-        newToken.id = null;
-        newToken.type = Syntax.FunctionExpression;
-    } else {
-        newToken = rocambole.parse(str);
-    }
-
-    // Update linked list references
+    // update linked list references
     if (node.startToken.prev) {
         node.startToken.prev.next = newToken;
+        newToken.prev = node.startToken.prev;
     }
     if (node.endToken.next) {
         node.endToken.next.prev = newToken;
+        newToken.next = node.endToken.next;
     }
     node.startToken = node.endToken = newToken;
 };
