@@ -4,38 +4,30 @@
 
 var Optimizer = require('./Optimizer'),
     esprima = require('esprima'),
-    escodegen = require('escodegen'),
     inherits = require('inherits'),
     Syntax = esprima.Syntax,
     OptimizerClosure;
 
 /**
  * Constructor.
- *
- * @param {Object} opts The escodegen options
  */
-OptimizerClosure = function (opts) {
-    Optimizer.call(this, opts);
+OptimizerClosure = function () {
+    Optimizer.call(this);
 };
 
 /**
- * Checks if this optimizer can optimize a target.
- *
- * @param {String|Object} target The string or the ast
+ * {@inheritDoc}
  */
 OptimizerClosure.prototype.canOptimize = function () {
     return true;
 };
 
 /**
- * Optimizes a concrete class.
- * The ast will be directly modified.
- *
- * @param {Object} ast The class ast
+ * {@inheritDoc}
  */
-OptimizerClosure.prototype.optimizeClass = function (ast) {
-    var args = ast['arguments'],
-        type = ast.callee.property.name,
+OptimizerClosure.prototype.optimizeClass = function (node) {
+    var args = node['arguments'],
+        type = node.callee.property.name,
         extend,
         funcExpression,
         canBeOptimized,
@@ -77,7 +69,7 @@ OptimizerClosure.prototype.optimizeClass = function (ast) {
 
         if (type !== 'extend') {
             this._removeExtends(args[0]);
-            ast['arguments'] = [
+            node['arguments'] = [
                 {
                     type: 'Identifier',
                     name: extend
@@ -85,7 +77,7 @@ OptimizerClosure.prototype.optimizeClass = function (ast) {
                 funcExpression
             ];
         } else {
-            ast['arguments'] = [funcExpression];
+            node['arguments'] = [funcExpression];
         }
     } else {
         hasParent = false;
@@ -95,7 +87,7 @@ OptimizerClosure.prototype.optimizeClass = function (ast) {
                 name: '$self'
             }
         );
-        ast['arguments'] = [funcExpression];
+        node['arguments'] = [funcExpression];
     }
 
     funcExpression.body.body[0].argument = args[0];
@@ -109,7 +101,7 @@ OptimizerClosure.prototype.optimizeClass = function (ast) {
     // Add a true flag if the constructor can be optimized
     // and remove the $super and $parent that was previously added
     if (canBeOptimized) {
-        ast['arguments'].push({
+        node['arguments'].push({
             type: 'Literal',
             value: true
         });
@@ -123,23 +115,11 @@ OptimizerClosure.prototype.optimizeClass = function (ast) {
 };
 
 /**
- * Replaces a function usage of keywords for their efficient counterparts.
- * Basically this.$super, this.$static and this.$self will be optimized.
- *
- * @param {String} funcName The function name
- * @param {Object} ast      The function ast
- * @param {Boolean} isStatic True if in static context, false otherwise
- *
- * @return {Boolean} False if this functions causes the constructor to not be optimized, false otherwise
+ * {@inheritDoc}
  */
-OptimizerClosure.prototype._replaceSpecial = function (funcName, ast, isStatic) {
-    if (!ast.value && !ast.object) {
-        process.stderr.write(JSON.stringify(ast, null, '  '));
-        process.exit(1);
-    }
-    var code = escodegen.generate(ast.value || ast.object, this._escodegenOpts),
-        canBeOptimized = true,
-        newAst;
+OptimizerClosure.prototype._replaceSpecial = function (funcName, node, isStatic) {
+    var code = node.value ? node.value.toString() : node.object.toString(),
+        canBeOptimized = true;
 
     function selfReplacer() {
         canBeOptimized = false;
@@ -151,34 +131,25 @@ OptimizerClosure.prototype._replaceSpecial = function (funcName, ast, isStatic) 
     }
 
     // Super replacement
-    code = code.replace(/(this|that|_this|self)((?:\r|\n|\s)*)?\.((?:\r|\n|\s)*)\$super\(/g, '$super$2.$3' + funcName + '.call($1, ')
-               .replace(/(this|that|_this|self), \)/g, '$1)');
+    code = code.replace(/(_*this|_*that|_*self)((?:\r|\n|\s)*)?\.((?:\r|\n|\s)*)\$super\(/g, '$super$2.$3' + funcName + '.call($1, ')
+               .replace(/(_*this|_*that|_*self), \)/g, '$1)');
 
     // If on static context, $super is actually $parent
     // Also this.$static can be replaced by this because is faster
     if (isStatic) {
         code = code.replace(/\$super/g, '$parent');
-        code = code.replace(/(this|that|_this|self)((?:\r|\n|\s)*)?\.((?:\r|\n|\s)*)?\$static/g, '$1$2$3');
+        code = code.replace(/(_*this|_*that|_*self)((?:\r|\n|\s)*)?\.((?:\r|\n|\s)*)?\$static/g, '$1$2$3');
     }
 
     // Self replacement
-    code = code.replace(/(this|that|_this|self)((?:\r|\n|\s)*)?\.((?:\r|\n|\s)*)?\$self?/g, selfReplacer);
+    code = code.replace(/(_*this|_*that|_*self)((?:\r|\n|\s)*)?\.((?:\r|\n|\s)*)?\$self?/g, selfReplacer);
 
     // Test if something went wrong
     if (/\.(\r|\n|\s)*\$super/g.test(code) || /\.(\r|\n|\s)*\$self/g.test(code) || (isStatic && /\.(\r|\n|\s)*\$static/g.test(code))) {
-        process.stderr.write('The optimization might have broken the behavior at line ' + ast.value.loc.start.line + ', column ' + ast.value.loc.start.column + '\n');
+        process.stderr.write('The optimization might have broken the behavior at line ' + node.value.loc.start.line + ', column ' + node.value.loc.start.column + '\n');
     }
 
-    code = code.replace(/function\s*\(/, 'function x(');
-
-    if (ast.value) {
-        ast.value = newAst = esprima.parse(code).body[0];
-    } else {
-        ast.object = newAst = esprima.parse(code).body[0];
-    }
-
-    newAst.id = null;
-    newAst.type = Syntax.FunctionExpression;
+    this._updateNode(node.value || node.object, code);
 
     return canBeOptimized;
 };

@@ -6,45 +6,36 @@ var utils = require('mout'),
     Parser = require('./lib/Parser'),
     Optimizer = require('./lib/Optimizer'),
     OptimizerClosure = require('./lib/OptimizerClosure'),
-    esprima = require('esprima'),
-    escodegen = require('escodegen');
+    esformatter = require('esformatter');
 
 module.exports = function (contents, options, callback) {
-    callback = utils.lang.isFunction(options) ? options: callback;
-    options = utils.object.deepMixIn({
-        closure: false,
-        esprimaOpts: {},
-        escodegenOpts: {}
-    }, options || {});
+    if (utils.lang.isFunction(options)) {
+        callback = options;
+        options = {};
+    } else {
+        options = options || {};
+    }
 
-    // Enforce some options
-    utils.object.mixIn(options.esprimaOpts, {
-        comment: true,
-        loc: true,
-        range: true
-    });
-    utils.object.mixIn(options.escodegenOpts, {
-        comment: true
-    });
+    options = utils.object.mixIn({
+        closure: false
+    }, options);
 
-    var ast = esprima.parse(contents, options.esprimaOpts),
-        parser = new Parser(),
+    var parser = new Parser(),
         optimizer = new Optimizer({ escodegen: options.escodegenOpts }),
         optimizerClosure = new OptimizerClosure({ escodegen: options.escodegenOpts }),
         errors = [],
+        ast,
         output;
 
     // Find usages
-    parser.forEachUsage(ast, function (err, obj) {
+    ast = parser.forEachUsage(contents, function (err, obj) {
         if (err) {
             return errors.push(err);
         }
 
-        var slice = contents.substr(obj.ast.range[0], obj.ast.range[1]);
-
         // Use the closure optimizer if the user wants to use it
         // or if the default one can't be used
-        if (options.closure || !optimizer.canOptimize(slice)) {
+        if (options.closure || !optimizer.canOptimize(obj.node)) {
             optimizerClosure.optimize(obj);
         } else {
             optimizer.optimize(obj);
@@ -52,7 +43,7 @@ module.exports = function (contents, options, callback) {
     });
 
     // Generate the source
-    output = escodegen.generate(ast, options.escodegenOpts);
+    output = esformatter.format(ast);
 
     callback(errors, output);
 };

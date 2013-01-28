@@ -2,7 +2,8 @@
 
 'use strict';
 
-var esprima = require('esprima'),
+var rocambole = require('rocambole'),
+    esprima = require('esprima'),
     Syntax = esprima.Syntax,
     Parser;
 
@@ -13,27 +14,23 @@ Parser = function () {};
 
 /**
  * Run the callback foreach dejavu usage.
- * The callback will receive an object containing a type and the ast.
+ * The callback will receive an object containing a type and the node.
  * The type is either interface, abstract or concrete.
  *
- * @param {Object}   ast      The ast
+ * @param {String}   code     The source code
  * @param {Function} callback The callback
+ *
+ * @return {Object} The ast
  */
-Parser.prototype.forEachUsage = function (ast, callback) {
-    var queue = [ast],
-        curr,
-        objectName,
-        x,
-        keys,
-        props;
+Parser.prototype.forEachUsage = function (code, callback) {
+    var objectName,
+        props,
+        ast,
+        that = this;
 
-    while (queue.length) {
-        curr = queue.pop();
+    ast = rocambole.parse(code, { loc: true });
 
-        if (!curr) {
-            continue;
-        }
-
+    rocambole.recursive(ast, function (curr) {
         if (curr.type === Syntax.CallExpression &&
             curr.callee.type === Syntax.MemberExpression &&
             curr.callee.property.type === Syntax.Identifier &&
@@ -44,57 +41,47 @@ Parser.prototype.forEachUsage = function (ast, callback) {
             // Obvious usage
             if (curr.callee.property.name === 'declare') {
                 if (objectName === 'Interface') {
-                    callback(null, { type: 'interface', ast: curr });
+                    callback(null, { type: 'interface', node: curr });
                 } else if (objectName === 'AbstractClass') {
-                    callback(null, { type: 'abstract', ast: curr });
+                    callback(null, { type: 'abstract', node: curr });
                 } else if (objectName === 'Class' || objectName === 'FinalClass') {
-                    callback(null, { type: 'concrete', ast: curr });
+                    callback(null, { type: 'concrete', node: curr });
                 }
             // Usage with extend
             } else if (curr.callee.property.name === 'extend') {
                 props = curr['arguments'][0].properties;
 
-                if (this._isInterface(props)) {
-                    callback(null, { type: 'interface', ast: curr });
-                } else if (this._isAbstractClass(props)) {
-                    callback(null, { type: 'abstract', ast: curr });
-                } else if (this._isClass(props)) {
-                    callback(null, { type: 'concrete', ast: curr });
+                if (that._isInterface(props)) {
+                    callback(null, { type: 'interface', node: curr });
+                } else if (that._isAbstractClass(props)) {
+                    callback(null, { type: 'abstract', node: curr });
+                } else if (that._isClass(props)) {
+                    callback(null, { type: 'concrete', node: curr });
                 } else {
                     callback(new Error('Not enough metadata to optimize usage at line ' + curr.loc.start.line + ', column ' + curr.loc.start.column + ' (add a $name property?)\n'));
                 }
             }
         }
+    });
 
-        if (Object.prototype.toString.call(curr) === '[object Array]') {
-            for (x = curr.length - 1; x >= 0; x -= 1) {
-                queue.push(curr[x]);
-            }
-        } else if (curr.type) {
-            keys = Object.keys(curr);
-
-            for (x = keys.length - 1; x >= 0; x -= 1) {
-                queue.push(curr[keys[x]]);
-            }
-        }
-    }
+    return ast;
 };
 
 /**
- * Checks if the passed asts (members) are part of an interface.
+ * Checks if the passed nodes (members) are part of an interface.
  *
- * @param  {Array} asts The asts
+ * @param {Array} asts The nodes
  *
  * @return {Boolean} True if it is, false otherwise
  */
-Parser.prototype._isInterface = function (asts) {
+Parser.prototype._isInterface = function (nodes) {
     var x,
         curr;
 
     // Every single function must be empty
     // Also all the properties must be functions except a few ones ($extends, $name, $static)
-    for (x = asts.length - 1; x >= 0; x -= 1) {
-        curr = asts[x];
+    for (x = nodes.length - 1; x >= 0; x -= 1) {
+        curr = nodes[x];
 
         if (curr.key.name === '$name' || curr.key.name === '$extends') {
             continue;
@@ -117,19 +104,19 @@ Parser.prototype._isInterface = function (asts) {
 };
 
 /**
- * Checks if the passed asts (members) are part of an abstract class.
+ * Checks if the passed nodes (members) are part of an abstract class.
  *
- * @param  {Array} asts The asts
+ * @param {Array} nodes The nodes
  *
  * @return {Boolean} True if it is, false otherwise
  */
-Parser.prototype._isAbstractClass = function (asts) {
+Parser.prototype._isAbstractClass = function (nodes) {
     // Check if it has an $abstracts
     var x,
         curr;
 
-    for (x = asts.length - 1; x >= 0; x -= 1) {
-        curr = asts[x];
+    for (x = nodes.length - 1; x >= 0; x -= 1) {
+        curr = nodes[x];
 
         if (curr.key.name === '$abstracts') {
             return true;
@@ -140,20 +127,20 @@ Parser.prototype._isAbstractClass = function (asts) {
 };
 
 /**
- * Checks if the passed asts (members) are part of a concrete class.
+ * Checks if the passed nodes (members) are part of a concrete class.
  *
- * @param  {Array} asts The asts
+ * @param {Array} nodes The nodes
  *
  * @return {Boolean} True if it is, false otherwise
  */
-Parser.prototype._isClass = function (asts) {
+Parser.prototype._isClass = function (nodes) {
     // Check if it has a $name, $extends, $borrows, $statics, $finals, $constants
     var x,
         curr,
         known = ['$name', '$extends', '$borrows', '$implements', '$statics', '$finals', '$constants'];
 
-    for (x = asts.length - 1; x >= 0; x -= 1) {
-        curr = asts[x];
+    for (x = nodes.length - 1; x >= 0; x -= 1) {
+        curr = nodes[x];
 
         if (known.indexOf(curr.key.name) !== -1) {
             return true;
