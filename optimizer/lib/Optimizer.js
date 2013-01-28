@@ -257,6 +257,9 @@ Optimizer.prototype._findAndParseFunctions = function (nodes, isStatic) {
  * @return {Boolean} False if this functions causes the constructor to not be optimized, false otherwise
  */
 Optimizer.prototype._replaceSpecial = function (funcName, node, isStatic) {
+    // TODO: Replace the node's instead of using regexps?
+    //       In this case, regexps are much easier but more error prone
+    //       Anyway, at this point we are inside a class function
     var code = node.value ? node.value.toString() : node.object.toString(),
         currParent = this._currentParent;
 
@@ -276,6 +279,9 @@ Optimizer.prototype._replaceSpecial = function (funcName, node, isStatic) {
     if (isStatic) {
         code = code.replace(/(_*this|_*that|_*self)((?:\r|\n|\s)*)?\.((?:\r|\n|\s)*)?\$static/g, '$1$2$3');
     }
+
+    // Remove member
+    code = code.replace(/\.\$member\(\)/g, '');
 
     this._updateNode(node.value || node.object, code);
 
@@ -329,7 +335,6 @@ Optimizer.prototype._removeExtends = function (node) {
 Optimizer.prototype._updateNode = function (node, str) {
     var newToken;
 
-    return;
     if (node.type === Syntax.FunctionExpression) {
         str = str.replace(/function\s*\(/, 'function x(');
         newToken = rocambole.parse(str).body[0];
