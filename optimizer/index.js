@@ -6,7 +6,8 @@ var utils = require('mout'),
     Parser = require('./lib/Parser'),
     Optimizer = require('./lib/Optimizer'),
     OptimizerClosure = require('./lib/OptimizerClosure'),
-    esformatter = require('esformatter');
+    esformatter = require('esformatter'),
+    fs = require('fs');
 
 module.exports = function (contents, options, callback) {
     if (utils.lang.isFunction(options)) {
@@ -43,7 +44,7 @@ module.exports = function (contents, options, callback) {
     });
 
     // Generate the source
-    output = esformatter.format(ast);
+    output = esformatter.format(ast/*, JSON.parse(fs.readFileSync(__dirname + '/preset.json').toString())*/);
 
     callback(errors, output);
 };
